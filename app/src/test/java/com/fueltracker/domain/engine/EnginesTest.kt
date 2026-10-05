@@ -187,5 +187,41 @@ class EnginesTest {
 
         assertEquals("19:00 - 21:00", recommendation.recommendedTimeWindow)
         assertTrue(recommendation.estimatedSavingsPerUnit >= 0.10)
+        assertTrue(recommendation.message.contains("Refuel in 5 days ("))
+    }
+
+    @Test
+    fun testPriceIntelligenceEngine_formatTargetDay() {
+        val testTime = 1760000000000L
+        val tomorrow = PriceIntelligenceEngine.formatTargetDay(testTime, 1L, java.util.Locale.US)
+        assertTrue(tomorrow.startsWith("tomorrow ("))
+        assertTrue(tomorrow.endsWith(")"))
+
+        val multiDay = PriceIntelligenceEngine.formatTargetDay(testTime, 4L, java.util.Locale.US)
+        assertTrue(multiDay.startsWith("in 4 days ("))
+        assertTrue(multiDay.endsWith(")"))
+    }
+
+    @Test
+    fun testPriceIntelligenceEngine_tomorrowRefillMessage() {
+        val now = 1760000000000L
+        val forecast = DepletionForecast(
+            remainingUnits = 5.0,
+            remainingPercent = 10.0,
+            remainingRangeKm = 70,
+            dailyKmRate = 50.0,
+            estimatedEmptyDateEpochMs = now + (1 * 24 * 3600 * 1000L),
+            estimatedCostToFull = 60.0,
+            projectedMonthlyExpense = 150.0
+        )
+
+        val recommendation = PriceIntelligenceEngine.recommendNextRefill(
+            forecast = forecast,
+            snapshots = emptyList(),
+            fuelType = FuelType.DIESEL,
+            currentTimeMs = now
+        )
+
+        assertTrue(recommendation.message.contains("Refuel tomorrow ("))
     }
 }

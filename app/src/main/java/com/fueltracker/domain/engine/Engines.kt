@@ -4,7 +4,10 @@ import com.fueltracker.domain.model.FuelType
 import com.fueltracker.domain.model.PriceSnapshot
 import com.fueltracker.domain.model.RefuelLog
 import com.fueltracker.domain.model.Vehicle
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToLong
 
@@ -310,6 +313,16 @@ object PriceIntelligenceEngine {
         return FuelMath.roundToDecimals(blended, 3)
     }
 
+    fun formatTargetDay(targetDateMs: Long, dayOffset: Long, locale: Locale = Locale.getDefault()): String {
+        val sdf = SimpleDateFormat("EEE, dd.MM", locale)
+        val dateFormatted = sdf.format(Date(targetDateMs))
+        return if (dayOffset == 1L) {
+            "tomorrow ($dateFormatted)"
+        } else {
+            "in $dayOffset days ($dateFormatted)"
+        }
+    }
+
     fun recommendNextRefill(
         forecast: DepletionForecast,
         snapshots: List<PriceSnapshot> = emptyList(),
@@ -325,6 +338,7 @@ object PriceIntelligenceEngine {
         val daysUntilEmpty = max(1L, (forecast.estimatedEmptyDateEpochMs - currentTimeMs) / MS_PER_DAY)
         val targetDayOffset = if (daysUntilEmpty > 2) daysUntilEmpty - 1 else 1L
         val targetDateMs = currentTimeMs + (targetDayOffset * MS_PER_DAY)
+        val targetDayText = formatTargetDay(targetDateMs, targetDayOffset)
 
         if (stationProfiles.isEmpty() && snapshots.isNotEmpty()) {
             val cheapestHour = hourlyAverages.minByOrNull { it.value }?.key ?: 19
@@ -338,7 +352,7 @@ object PriceIntelligenceEngine {
                 suggestedDateEpochMs = targetDateMs,
                 expectedPricePerUnit = lowestPrice,
                 estimatedSavingsPerUnit = savings,
-                message = "Prices are lowest around $windowStr. Refuel on day $targetDayOffset before reaching reserve to save ~€${savings}/L."
+                message = "Prices are lowest around $windowStr. Refuel $targetDayText before reaching reserve to save ~€${savings}/L."
             )
         }
 
@@ -383,7 +397,7 @@ object PriceIntelligenceEngine {
             suggestedDateEpochMs = targetDateMs,
             expectedPricePerUnit = lowestPrice,
             estimatedSavingsPerUnit = savings,
-            message = "Prices are lowest around $windowStr. Refuel on day $targetDayOffset before reaching reserve to save ~€${savings}/L."
+            message = "Prices are lowest around $windowStr. Refuel $targetDayText before reaching reserve to save ~€${savings}/L."
         )
     }
 }

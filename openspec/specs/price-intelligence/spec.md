@@ -17,11 +17,11 @@ The system SHALL record historical price observations per fuel type and station 
 - **THEN** system ensures a matching station entity exists before recording the price snapshot, avoiding foreign key constraint failures
 
 ### Requirement: Recommended Fill-Up Time Window
-The system SHALL generate an optimal refill recommendation combining predicted depletion schedule and historical price valleys.
+The system SHALL generate an optimal refill recommendation combining predicted depletion schedule and historical price valleys, presenting the target refill timing with unambiguous relative days and localized weekday or calendar date descriptions.
 
 #### Scenario: Recommending low-cost window before reserve
 - **WHEN** predicted fuel tank level is within 3 days of reaching 15% reserve and historical prices consistently drop in the evening
-- **THEN** system alerts the user with a recommended time window (e.g., 18:00–20:00 on the following evening) and expected price savings
+- **THEN** system alerts the user with a recommended time window (e.g., 18:00–20:00), an unambiguous target day description (such as "in 2 days" or "tomorrow"), and expected price savings
 
 ### Requirement: Austrian E-Control Price Feed Querying
 The system SHALL query the official Austrian E-Control Spritpreisrechner REST API for nearby fuel stations and real-time prices for the vehicle's primary fuel type without requiring a remote intermediary server.
