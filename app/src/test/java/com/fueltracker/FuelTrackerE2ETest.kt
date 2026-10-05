@@ -14,6 +14,7 @@ import com.fueltracker.domain.model.PowertrainType
 import com.fueltracker.domain.model.PriceSnapshot
 import com.fueltracker.domain.model.RefuelLog
 import com.fueltracker.domain.model.Vehicle
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -145,5 +146,99 @@ class FuelTrackerE2ETest {
 
         assertEquals("19:00 - 21:00", recommendation.recommendedTimeWindow)
         assertTrue(recommendation.estimatedSavingsPerUnit >= 0.10)
+
+        // 10. Verify hybrid price intelligence (Prior baseline + E-Control sync + Profile aggregation + Pruning)
+        val stationDao = com.fueltracker.data.repository.FakeFuelStationDao()
+        val snapshotDao = com.fueltracker.data.repository.FakePriceSnapshotDao()
+        val profileDao = com.fueltracker.data.repository.FakeStationPriceProfileDao()
+        val priceRepo = com.fueltracker.data.repository.PriceRepositoryImpl(stationDao, snapshotDao, profileDao)
+        val userPrefsRepo = com.fueltracker.data.repository.FakeUserPreferencesRepository()
+
+        // 10a. Cold start with zero snapshots uses Upper Austria prior baseline
+        val coldStartRec = PriceIntelligenceEngine.recommendNextRefill(
+            forecast = forecast,
+            snapshots = emptyList(),
+            stationProfiles = emptyList(),
+            fuelType = FuelType.DIESEL
+        )
+        assertNotNull(coldStartRec)
+        assertEquals("11:00 - 13:00", coldStartRec.recommendedTimeWindow)
+        assertTrue(coldStartRec.estimatedSavingsPerUnit >= 0.05)
+
+        // 10b. User sets custom API key and proxy URL
+        userPrefsRepo.setCustomApiKey("test-user-api-key")
+        userPrefsRepo.setCustomApiUrl("https://custom-proxy.internal/sprit")
+        assertEquals("test-user-api-key", userPrefsRepo.customApiKeyFlow.first())
+
+        // 10c. External E-Control API sync creates station, snapshot, and profile observation
+        val mockApiResponse = """
+            [
+              {
+                "id": "e_9001",
+                "name": "OMV Linz",
+                "location": {
+                  "address": "Freistädter Strasse 20",
+                  "city": "Linz",
+                  "latitude": 48.315,
+                  "longitude": 14.305
+                },
+                "prices": [
+                  {
+                    "fuelType": "DIE",
+                    "amount": 1.589
+                  }
+                ],
+                "open": true
+              }
+            ]
+        """.trimIndent()
+        val client = com.fueltracker.data.remote.EControlApiClient(httpFetcher = { _, _ -> mockApiResponse })
+        val fetched = client.fetchNearbyPrices(48.315, 14.305, FuelType.DIESEL)
+        assertEquals(1, fetched.size)
+
+        val station = fetched.first().station
+        priceRepo.saveStation(station)
+
+        val nowMs = System.currentTimeMillis()
+        val targetCal = java.util.Calendar.getInstance()
+        targetCal.timeInMillis = nowMs + (24L * 3600 * 1000L)
+        val targetDayOfWeek = targetCal.get(java.util.Calendar.DAY_OF_WEEK)
+
+        // Record strong local observations at 10:00 AM on target day with 1.45
+        repeat(10) {
+            priceRepo.recordPriceObservation(
+                stationId = station.id,
+                fuelType = FuelType.DIESEL,
+                dayOfWeek = targetDayOfWeek,
+                hourOfDay = 10,
+                price = 1.45,
+                timestampMs = nowMs
+            )
+        }
+
+        // Record a 4-day old snapshot and prune it
+        val fourDaysAgo = nowMs - (4L * 24L * 3600L * 1000L)
+        snapshotDao.insertSnapshot(
+            com.fueltracker.data.local.entity.PriceSnapshotEntity("old_snap", station.id, fourDaysAgo, FuelType.DIESEL, 1.75)
+        )
+        val pruned = priceRepo.pruneSnapshotsOlderThan(nowMs - (3L * 24L * 3600L * 1000L))
+        assertEquals(1, pruned)
+
+        // Profiles remain intact and populated
+        val profiles = priceRepo.getProfilesForStationSync(station.id, FuelType.DIESEL)
+        assertEquals(1, profiles.size)
+        assertEquals(1.45, profiles.first().runningAvgPrice, 0.001)
+        assertEquals(10, profiles.first().sampleCount)
+
+        // Blended recommendation reflects updated profile observations
+        val blendedRec = PriceIntelligenceEngine.recommendNextRefill(
+            forecast = forecast,
+            snapshots = emptyList(),
+            stationProfiles = profiles,
+            fuelType = FuelType.DIESEL,
+            currentTimeMs = nowMs
+        )
+        assertNotNull(blendedRec)
+        assertEquals("10:00 - 12:00", blendedRec.recommendedTimeWindow)
     }
 }

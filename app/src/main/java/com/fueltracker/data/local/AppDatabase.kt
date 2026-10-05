@@ -36,9 +36,10 @@ class Converters {
         VehicleEntity::class,
         RefuelLogEntity::class,
         FuelStationEntity::class,
-        PriceSnapshotEntity::class
+        PriceSnapshotEntity::class,
+        com.fueltracker.data.local.entity.StationPriceProfileEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -47,10 +48,32 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun refuelLogDao(): RefuelLogDao
     abstract fun fuelStationDao(): FuelStationDao
     abstract fun priceSnapshotDao(): PriceSnapshotDao
+    abstract fun stationPriceProfileDao(): com.fueltracker.data.local.dao.StationPriceProfileDao
 
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
+
+        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `station_price_profiles` (
+                        `stationId` TEXT NOT NULL,
+                        `fuelType` TEXT NOT NULL,
+                        `dayOfWeek` INTEGER NOT NULL,
+                        `hourOfDay` INTEGER NOT NULL,
+                        `runningAvgPrice` REAL NOT NULL,
+                        `sampleCount` INTEGER NOT NULL,
+                        `lastUpdatedEpochMs` INTEGER NOT NULL,
+                        PRIMARY KEY(`stationId`, `fuelType`, `dayOfWeek`, `hourOfDay`),
+                        FOREIGN KEY(`stationId`) REFERENCES `fuel_stations`(`id`) ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_station_price_profiles_stationId` ON `station_price_profiles` (`stationId`)")
+            }
+        }
 
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -58,7 +81,10 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "fuel_tracker.db"
-                ).fallbackToDestructiveMigration().build()
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }

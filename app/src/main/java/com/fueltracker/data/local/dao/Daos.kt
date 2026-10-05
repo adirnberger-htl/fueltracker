@@ -63,7 +63,7 @@ interface FuelStationDao {
     @Query("SELECT * FROM fuel_stations WHERE id = :id LIMIT 1")
     suspend fun getStationById(id: String): FuelStationEntity?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertStation(station: FuelStationEntity): Long
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -86,5 +86,34 @@ interface PriceSnapshotDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSnapshots(snapshots: List<PriceSnapshotEntity>): List<Long>
+
+    @Query("DELETE FROM price_snapshots WHERE timestampEpochMs < :cutoffEpochMs")
+    suspend fun pruneSnapshotsOlderThan(cutoffEpochMs: Long): Int
 }
+
+@Dao
+interface StationPriceProfileDao {
+    @Query("SELECT * FROM station_price_profiles WHERE stationId = :stationId AND fuelType = :fuelType")
+    fun getProfilesForStation(stationId: String, fuelType: com.fueltracker.domain.model.FuelType): Flow<List<com.fueltracker.data.local.entity.StationPriceProfileEntity>>
+
+    @Query("SELECT * FROM station_price_profiles WHERE stationId = :stationId AND fuelType = :fuelType")
+    suspend fun getProfilesForStationSync(stationId: String, fuelType: com.fueltracker.domain.model.FuelType): List<com.fueltracker.data.local.entity.StationPriceProfileEntity>
+
+    @Query("SELECT * FROM station_price_profiles WHERE fuelType = :fuelType")
+    fun getAllProfilesForFuelType(fuelType: com.fueltracker.domain.model.FuelType): Flow<List<com.fueltracker.data.local.entity.StationPriceProfileEntity>>
+
+    @Query("SELECT * FROM station_price_profiles WHERE fuelType = :fuelType")
+    suspend fun getAllProfilesForFuelTypeSync(fuelType: com.fueltracker.domain.model.FuelType): List<com.fueltracker.data.local.entity.StationPriceProfileEntity>
+
+    @Query("SELECT * FROM station_price_profiles WHERE stationId = :stationId AND fuelType = :fuelType AND dayOfWeek = :dayOfWeek AND hourOfDay = :hourOfDay LIMIT 1")
+    suspend fun getProfile(stationId: String, fuelType: com.fueltracker.domain.model.FuelType, dayOfWeek: Int, hourOfDay: Int): com.fueltracker.data.local.entity.StationPriceProfileEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertProfile(profile: com.fueltracker.data.local.entity.StationPriceProfileEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertProfiles(profiles: List<com.fueltracker.data.local.entity.StationPriceProfileEntity>): List<Long>
+}
+
+
 

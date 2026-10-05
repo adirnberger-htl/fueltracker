@@ -38,6 +38,7 @@ class MainActivity : ComponentActivity() {
                     val uiState by viewModel.uiState.collectAsState()
 
                     var showAddVehicleDialog by remember { mutableStateOf(false) }
+                    var showPriceSettingsDialog by remember { mutableStateOf(false) }
 
                     NavHost(navController = navController, startDestination = "dashboard") {
                         composable("dashboard") {
@@ -46,7 +47,8 @@ class MainActivity : ComponentActivity() {
                                 onSelectVehicle = { viewModel.selectActiveVehicle(it) },
                                 onAddRefuelClick = { navController.navigate("add_refuel") },
                                 onAddVehicleClick = { showAddVehicleDialog = true },
-                                onDeleteLog = { viewModel.deleteRefuelLog(it) }
+                                onDeleteLog = { viewModel.deleteRefuelLog(it) },
+                                onSettingsClick = { showPriceSettingsDialog = true }
                             )
                         }
 
@@ -71,6 +73,21 @@ class MainActivity : ComponentActivity() {
                                 viewModel.saveVehicle(vehicle)
                                 showAddVehicleDialog = false
                             }
+                        )
+                    }
+
+                    if (showPriceSettingsDialog) {
+                        com.fueltracker.ui.screens.PriceSettingsDialog(
+                            initialApiKey = uiState.customApiKey,
+                            initialApiUrl = uiState.customApiUrl,
+                            onSave = { apiKey, apiUrl ->
+                                viewModel.updateCustomApiKey(apiKey)
+                                viewModel.updateCustomApiUrl(apiUrl)
+                            },
+                            onSyncNow = {
+                                viewModel.syncPricesNow()
+                            },
+                            onDismiss = { showPriceSettingsDialog = false }
                         )
                     }
                 }

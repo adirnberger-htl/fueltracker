@@ -289,29 +289,92 @@ object PriceIntelligenceEngine {
         }
     }
 
+    /**
+     * Blends empirical station profile observations with regional prior using Bayesian/EMA weighting.
+     * w = min(1.0, sampleCount / 10.0)
+     * price = w * localAvg + (1 - w) * priorPrice
+     */
+    fun blendPriceWithPrior(
+        dayOfWeek: Int,
+        hourOfDay: Int,
+        basePrice: Double,
+        stationProfile: com.fueltracker.domain.model.StationPriceProfile?,
+        prior: com.fueltracker.domain.model.RegionalPricePrior
+    ): Double {
+        val priorPrice = FuelMath.roundToDecimals(basePrice * prior.getMultiplier(dayOfWeek, hourOfDay), 3)
+        if (stationProfile == null || stationProfile.sampleCount <= 0) {
+            return priorPrice
+        }
+        val weight = (stationProfile.sampleCount / 10.0).coerceAtMost(1.0)
+        val blended = (weight * stationProfile.runningAvgPrice) + ((1.0 - weight) * priorPrice)
+        return FuelMath.roundToDecimals(blended, 3)
+    }
+
     fun recommendNextRefill(
         forecast: DepletionForecast,
-        snapshots: List<PriceSnapshot>,
+        snapshots: List<PriceSnapshot> = emptyList(),
+        stationProfiles: List<com.fueltracker.domain.model.StationPriceProfile> = emptyList(),
         fuelType: FuelType,
+        prior: com.fueltracker.domain.model.RegionalPricePrior? = null,
         currentTimeMs: Long = System.currentTimeMillis()
     ): RefillRecommendation {
+        val priorToUse = prior ?: PricePriorLoader.getDefaultPrior()
         val hourlyAverages = analyzePriceTrend(snapshots, fuelType)
-
-        // Find cheapest hour (defaulting to 19:00 if no data)
-        val cheapestHour = if (hourlyAverages.isNotEmpty()) {
-            hourlyAverages.minByOrNull { it.value }?.key ?: 19
-        } else {
-            19
-        }
-
-        val lowestPrice = hourlyAverages[cheapestHour] ?: 1.65
-        val highestPrice = hourlyAverages.maxOfOrNull { it.value } ?: (lowestPrice + 0.12)
-        val savings = FuelMath.roundToDecimals(max(0.02, highestPrice - lowestPrice), 3)
 
         // Suggest tomorrow or day before empty
         val daysUntilEmpty = max(1L, (forecast.estimatedEmptyDateEpochMs - currentTimeMs) / MS_PER_DAY)
         val targetDayOffset = if (daysUntilEmpty > 2) daysUntilEmpty - 1 else 1L
         val targetDateMs = currentTimeMs + (targetDayOffset * MS_PER_DAY)
+
+        if (stationProfiles.isEmpty() && snapshots.isNotEmpty()) {
+            val cheapestHour = hourlyAverages.minByOrNull { it.value }?.key ?: 19
+            val lowestPrice = hourlyAverages[cheapestHour] ?: 1.65
+            val highestPrice = hourlyAverages.maxOfOrNull { it.value } ?: (lowestPrice + 0.12)
+            val savings = FuelMath.roundToDecimals(max(0.02, highestPrice - lowestPrice), 3)
+            val windowStr = String.format("%02d:00 - %02d:00", cheapestHour, (cheapestHour + 2) % 24)
+
+            return RefillRecommendation(
+                recommendedTimeWindow = windowStr,
+                suggestedDateEpochMs = targetDateMs,
+                expectedPricePerUnit = lowestPrice,
+                estimatedSavingsPerUnit = savings,
+                message = "Prices are lowest around $windowStr. Refuel on day $targetDayOffset before reaching reserve to save ~€${savings}/L."
+            )
+        }
+
+        val calendar = Calendar.getInstance()
+        calendar.timeInMillis = targetDateMs
+        val targetDayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
+
+        val effectiveBasePrice = when {
+            hourlyAverages.isNotEmpty() -> hourlyAverages.values.average()
+            snapshots.isNotEmpty() -> snapshots.map { it.pricePerUnit }.average()
+            else -> priorToUse.defaultBaselinePrice
+        }
+
+        val profileByHour = stationProfiles
+            .filter { it.fuelType == fuelType && it.dayOfWeek == targetDayOfWeek }
+            .associateBy { it.hourOfDay }
+
+        val estimated24Hours = (0..23).associateWith { hour ->
+            if (hourlyAverages.containsKey(hour)) {
+                hourlyAverages[hour]!!
+            } else {
+                val profile = profileByHour[hour]
+                blendPriceWithPrior(
+                    dayOfWeek = targetDayOfWeek,
+                    hourOfDay = hour,
+                    basePrice = effectiveBasePrice,
+                    stationProfile = profile,
+                    prior = priorToUse
+                )
+            }
+        }
+
+        val cheapestHour = estimated24Hours.minByOrNull { it.value }?.key ?: 11
+        val lowestPrice = estimated24Hours[cheapestHour] ?: 1.65
+        val highestPrice = estimated24Hours.maxOfOrNull { it.value } ?: (lowestPrice + 0.12)
+        val savings = FuelMath.roundToDecimals(max(0.02, highestPrice - lowestPrice), 3)
 
         val windowStr = String.format("%02d:00 - %02d:00", cheapestHour, (cheapestHour + 2) % 24)
 

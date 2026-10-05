@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.LocalGasStation
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,7 +40,8 @@ fun DashboardScreen(
     onSelectVehicle: (String) -> Unit,
     onAddRefuelClick: () -> Unit,
     onAddVehicleClick: () -> Unit,
-    onDeleteLog: (RefuelLog) -> Unit
+    onDeleteLog: (RefuelLog) -> Unit,
+    onSettingsClick: () -> Unit = {}
 ) {
     var vehicleMenuExpanded by remember { mutableStateOf(false) }
 
@@ -80,6 +82,14 @@ fun DashboardScreen(
                                 }
                             )
                         }
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Price Settings"
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -275,7 +285,7 @@ fun ForecastBudgetCard(uiState: UiState) {
                     Text(text = "€${String.format(Locale.US, "%.2f", forecast.estimatedCostToFull)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
                 Column {
-                    Text(text = "Monthly Sacrifice", style = MaterialTheme.typography.labelSmall)
+                    Text(text = "Monthly Cost", style = MaterialTheme.typography.labelSmall)
                     Text(text = "€${String.format(Locale.US, "%.2f", forecast.projectedMonthlyExpense)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
             }

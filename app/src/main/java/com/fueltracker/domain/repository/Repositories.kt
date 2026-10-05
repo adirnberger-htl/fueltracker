@@ -31,9 +31,28 @@ interface PriceRepository {
     suspend fun recordPriceSnapshot(snapshot: PriceSnapshot)
     suspend fun getRecentSnapshots(limit: Int = 100): List<PriceSnapshot>
     suspend fun getSnapshotsSince(sinceEpochMs: Long): List<PriceSnapshot>
+    suspend fun pruneSnapshotsOlderThan(cutoffEpochMs: Long): Int
+    fun getProfilesForStation(stationId: String, fuelType: FuelType): Flow<List<com.fueltracker.domain.model.StationPriceProfile>>
+    suspend fun getProfilesForStationSync(stationId: String, fuelType: FuelType): List<com.fueltracker.domain.model.StationPriceProfile>
+    fun getAllProfilesForFuelType(fuelType: FuelType): Flow<List<com.fueltracker.domain.model.StationPriceProfile>>
+    suspend fun getAllProfilesForFuelTypeSync(fuelType: FuelType): List<com.fueltracker.domain.model.StationPriceProfile>
+    suspend fun recordPriceObservation(
+        stationId: String,
+        fuelType: FuelType,
+        dayOfWeek: Int,
+        hourOfDay: Int,
+        price: Double,
+        timestampMs: Long = System.currentTimeMillis()
+    )
+    suspend fun saveProfile(profile: com.fueltracker.domain.model.StationPriceProfile)
 }
 
 interface UserPreferencesRepository {
     val activeVehicleIdFlow: Flow<String?>
     suspend fun setActiveVehicleId(vehicleId: String)
+    val customApiKeyFlow: Flow<String?>
+    suspend fun setCustomApiKey(key: String?)
+    val customApiUrlFlow: Flow<String?>
+    suspend fun setCustomApiUrl(url: String?)
 }
+

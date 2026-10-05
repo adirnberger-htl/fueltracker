@@ -183,3 +183,51 @@ data class PriceSnapshotEntity(
         )
     }
 }
+
+@Entity(
+    tableName = "station_price_profiles",
+    primaryKeys = ["stationId", "fuelType", "dayOfWeek", "hourOfDay"],
+    foreignKeys = [
+        ForeignKey(
+            entity = FuelStationEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["stationId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index("stationId")
+    ]
+)
+data class StationPriceProfileEntity(
+    val stationId: String,
+    val fuelType: FuelType,
+    val dayOfWeek: Int,
+    val hourOfDay: Int,
+    val runningAvgPrice: Double,
+    val sampleCount: Int,
+    val lastUpdatedEpochMs: Long
+) {
+    fun toDomain() = com.fueltracker.domain.model.StationPriceProfile(
+        stationId = stationId,
+        fuelType = fuelType,
+        dayOfWeek = dayOfWeek,
+        hourOfDay = hourOfDay,
+        runningAvgPrice = runningAvgPrice,
+        sampleCount = sampleCount,
+        lastUpdatedEpochMs = lastUpdatedEpochMs
+    )
+
+    companion object {
+        fun fromDomain(profile: com.fueltracker.domain.model.StationPriceProfile) = StationPriceProfileEntity(
+            stationId = profile.stationId,
+            fuelType = profile.fuelType,
+            dayOfWeek = profile.dayOfWeek,
+            hourOfDay = profile.hourOfDay,
+            runningAvgPrice = profile.runningAvgPrice,
+            sampleCount = profile.sampleCount,
+            lastUpdatedEpochMs = profile.lastUpdatedEpochMs
+        )
+    }
+}
+

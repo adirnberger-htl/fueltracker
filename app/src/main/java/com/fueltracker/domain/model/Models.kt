@@ -60,3 +60,27 @@ data class PriceSnapshot(
     val fuelType: FuelType,
     val pricePerUnit: Double
 )
+
+data class RegionalPricePrior(
+    val region: String,
+    val name: String,
+    val version: Int,
+    val defaultBaselinePrice: Double,
+    val factorsByDay: Map<Int, List<Double>>
+) {
+    fun getMultiplier(dayOfWeek: Int, hourOfDay: Int): Double {
+        val dayFactors = factorsByDay[dayOfWeek] ?: factorsByDay.values.firstOrNull() ?: emptyList()
+        return if (hourOfDay in dayFactors.indices) dayFactors[hourOfDay] else 1.0
+    }
+}
+
+data class StationPriceProfile(
+    val stationId: String,
+    val fuelType: FuelType,
+    val dayOfWeek: Int,
+    val hourOfDay: Int,
+    val runningAvgPrice: Double,
+    val sampleCount: Int,
+    val lastUpdatedEpochMs: Long = System.currentTimeMillis()
+)
+
