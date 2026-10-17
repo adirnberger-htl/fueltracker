@@ -29,6 +29,7 @@ import com.fueltracker.domain.repository.VehicleRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import com.fueltracker.util.ImageStorageHelper
 
 class VehicleRepositoryImpl(
     private val vehicleDao: VehicleDao
@@ -84,6 +85,7 @@ class RefuelRepositoryImpl(
     }
 
     override suspend fun deleteLog(log: RefuelLog) {
+        log.receiptImagePath?.let { ImageStorageHelper.deleteReceiptImage(it) }
         refuelLogDao.deleteLog(RefuelLogEntity.fromDomain(log))
     }
 }

@@ -313,13 +313,23 @@ object PriceIntelligenceEngine {
         return FuelMath.roundToDecimals(blended, 3)
     }
 
+    fun formatRefillWindow(cheapestHour: Int): Pair<Int, String> {
+        val (start, end) = when {
+            cheapestHour == 11 -> 10 to 12 // Pre-noon dip capped before statutory 12:00 price surge
+            cheapestHour == 23 -> 23 to 24 // Midnight boundary
+            else -> cheapestHour to (cheapestHour + 2).coerceAtMost(24)
+        }
+        val windowStr = String.format("%02d:00 - %02d:00", start, end)
+        return start to windowStr
+    }
+
     fun formatTargetDay(targetDateMs: Long, dayOffset: Long, locale: Locale = Locale.getDefault()): String {
         val sdf = SimpleDateFormat("EEE, dd.MM", locale)
         val dateFormatted = sdf.format(Date(targetDateMs))
-        return if (dayOffset == 1L) {
-            "tomorrow ($dateFormatted)"
-        } else {
-            "in $dayOffset days ($dateFormatted)"
+        return when (dayOffset) {
+            0L -> "today ($dateFormatted)"
+            1L -> "tomorrow ($dateFormatted)"
+            else -> "in $dayOffset days ($dateFormatted)"
         }
     }
 
@@ -334,22 +344,49 @@ object PriceIntelligenceEngine {
         val priorToUse = prior ?: PricePriorLoader.getDefaultPrior()
         val hourlyAverages = analyzePriceTrend(snapshots, fuelType)
 
-        // Suggest tomorrow or day before empty
-        val daysUntilEmpty = max(1L, (forecast.estimatedEmptyDateEpochMs - currentTimeMs) / MS_PER_DAY)
-        val targetDayOffset = if (daysUntilEmpty > 2) daysUntilEmpty - 1 else 1L
+        val nowCal = Calendar.getInstance().apply { timeInMillis = currentTimeMs }
+        val emptyCal = Calendar.getInstance().apply { timeInMillis = forecast.estimatedEmptyDateEpochMs }
+
+        val msUntilEmpty = max(0L, forecast.estimatedEmptyDateEpochMs - currentTimeMs)
+        val daysUntilEmpty = msUntilEmpty / MS_PER_DAY
+
+        // Suggest today if emptying today (<18h or same calendar day), tomorrow if <=2 days, else day before empty
+        val targetDayOffset = when {
+            (nowCal.get(Calendar.YEAR) == emptyCal.get(Calendar.YEAR) &&
+             nowCal.get(Calendar.DAY_OF_YEAR) == emptyCal.get(Calendar.DAY_OF_YEAR)) ||
+            msUntilEmpty < 18L * 3600L * 1000L -> 0L
+            daysUntilEmpty <= 2L -> 1L
+            else -> daysUntilEmpty - 1L
+        }
+
         val targetDateMs = currentTimeMs + (targetDayOffset * MS_PER_DAY)
         val targetDayText = formatTargetDay(targetDateMs, targetDayOffset)
 
         if (stationProfiles.isEmpty() && snapshots.isNotEmpty()) {
-            val cheapestHour = hourlyAverages.minByOrNull { it.value }?.key ?: 19
+            val currentHour = nowCal.get(Calendar.HOUR_OF_DAY)
+            val candidateHours = if (targetDayOffset == 0L) {
+                hourlyAverages.filterKeys { it >= currentHour }
+            } else {
+                hourlyAverages
+            }
+            val cheapestHour = (if (candidateHours.isNotEmpty()) candidateHours else hourlyAverages)
+                .minByOrNull { it.value }?.key ?: 19
             val lowestPrice = hourlyAverages[cheapestHour] ?: 1.65
             val highestPrice = hourlyAverages.maxOfOrNull { it.value } ?: (lowestPrice + 0.12)
             val savings = FuelMath.roundToDecimals(max(0.02, highestPrice - lowestPrice), 3)
-            val windowStr = String.format("%02d:00 - %02d:00", cheapestHour, (cheapestHour + 2) % 24)
+            val (startHour, windowStr) = formatRefillWindow(cheapestHour)
+
+            val recCalendar = Calendar.getInstance().apply {
+                timeInMillis = targetDateMs
+                set(Calendar.HOUR_OF_DAY, startHour)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
 
             return RefillRecommendation(
                 recommendedTimeWindow = windowStr,
-                suggestedDateEpochMs = targetDateMs,
+                suggestedDateEpochMs = recCalendar.timeInMillis,
                 expectedPricePerUnit = lowestPrice,
                 estimatedSavingsPerUnit = savings,
                 message = "Prices are lowest around $windowStr. Refuel $targetDayText before reaching reserve to save ~€${savings}/L."
@@ -363,12 +400,29 @@ object PriceIntelligenceEngine {
         val effectiveBasePrice = when {
             hourlyAverages.isNotEmpty() -> hourlyAverages.values.average()
             snapshots.isNotEmpty() -> snapshots.map { it.pricePerUnit }.average()
+            stationProfiles.isNotEmpty() -> stationProfiles.map { it.runningAvgPrice }.average()
             else -> priorToUse.defaultBaselinePrice
         }
 
         val profileByHour = stationProfiles
             .filter { it.fuelType == fuelType && it.dayOfWeek == targetDayOfWeek }
-            .associateBy { it.hourOfDay }
+            .groupBy { it.hourOfDay }
+            .mapValues { (hour, profiles) ->
+                val totalSamples = profiles.sumOf { it.sampleCount }
+                val weightedAvg = if (totalSamples > 0) {
+                    profiles.sumOf { it.runningAvgPrice * it.sampleCount } / totalSamples
+                } else {
+                    profiles.map { it.runningAvgPrice }.average()
+                }
+                com.fueltracker.domain.model.StationPriceProfile(
+                    stationId = "composite",
+                    fuelType = fuelType,
+                    dayOfWeek = targetDayOfWeek,
+                    hourOfDay = hour,
+                    runningAvgPrice = FuelMath.roundToDecimals(weightedAvg, 3),
+                    sampleCount = totalSamples
+                )
+            }
 
         val estimated24Hours = (0..23).associateWith { hour ->
             if (hourlyAverages.containsKey(hour)) {
@@ -385,16 +439,31 @@ object PriceIntelligenceEngine {
             }
         }
 
-        val cheapestHour = estimated24Hours.minByOrNull { it.value }?.key ?: 11
+        val currentHour = nowCal.get(Calendar.HOUR_OF_DAY)
+        val candidateHours = if (targetDayOffset == 0L) {
+            estimated24Hours.filterKeys { it >= currentHour }
+        } else {
+            estimated24Hours
+        }
+        val cheapestHour = (if (candidateHours.isNotEmpty()) candidateHours else estimated24Hours)
+            .minByOrNull { it.value }?.key ?: 11
         val lowestPrice = estimated24Hours[cheapestHour] ?: 1.65
         val highestPrice = estimated24Hours.maxOfOrNull { it.value } ?: (lowestPrice + 0.12)
         val savings = FuelMath.roundToDecimals(max(0.02, highestPrice - lowestPrice), 3)
 
-        val windowStr = String.format("%02d:00 - %02d:00", cheapestHour, (cheapestHour + 2) % 24)
+        val (startHour, windowStr) = formatRefillWindow(cheapestHour)
+
+        val recCalendar = Calendar.getInstance().apply {
+            timeInMillis = targetDateMs
+            set(Calendar.HOUR_OF_DAY, startHour)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
 
         return RefillRecommendation(
             recommendedTimeWindow = windowStr,
-            suggestedDateEpochMs = targetDateMs,
+            suggestedDateEpochMs = recCalendar.timeInMillis,
             expectedPricePerUnit = lowestPrice,
             estimatedSavingsPerUnit = savings,
             message = "Prices are lowest around $windowStr. Refuel $targetDayText before reaching reserve to save ~€${savings}/L."

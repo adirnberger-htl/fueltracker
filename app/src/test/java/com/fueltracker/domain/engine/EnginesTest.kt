@@ -4,6 +4,7 @@ import com.fueltracker.domain.model.FuelType
 import com.fueltracker.domain.model.PowertrainType
 import com.fueltracker.domain.model.PriceSnapshot
 import com.fueltracker.domain.model.RefuelLog
+import com.fueltracker.domain.model.StationPriceProfile
 import com.fueltracker.domain.model.Vehicle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -193,6 +194,10 @@ class EnginesTest {
     @Test
     fun testPriceIntelligenceEngine_formatTargetDay() {
         val testTime = 1760000000000L
+        val today = PriceIntelligenceEngine.formatTargetDay(testTime, 0L, java.util.Locale.US)
+        assertTrue(today.startsWith("today ("))
+        assertTrue(today.endsWith(")"))
+
         val tomorrow = PriceIntelligenceEngine.formatTargetDay(testTime, 1L, java.util.Locale.US)
         assertTrue(tomorrow.startsWith("tomorrow ("))
         assertTrue(tomorrow.endsWith(")"))
@@ -223,5 +228,102 @@ class EnginesTest {
         )
 
         assertTrue(recommendation.message.contains("Refuel tomorrow ("))
+    }
+
+    @Test
+    fun testPriceIntelligenceEngine_todayRefillMessage() {
+        val now = 1760000000000L
+        val forecast = DepletionForecast(
+            remainingUnits = 2.0,
+            remainingPercent = 4.0,
+            remainingRangeKm = 25,
+            dailyKmRate = 50.0,
+            estimatedEmptyDateEpochMs = now + (6 * 3600 * 1000L), // empty in 6 hours today
+            estimatedCostToFull = 70.0,
+            projectedMonthlyExpense = 150.0
+        )
+
+        val recommendation = PriceIntelligenceEngine.recommendNextRefill(
+            forecast = forecast,
+            snapshots = emptyList(),
+            fuelType = FuelType.DIESEL,
+            currentTimeMs = now
+        )
+
+        assertTrue(recommendation.message.contains("Refuel today ("))
+    }
+
+    @Test
+    fun testPriceIntelligenceEngine_middayWindowCappingAndMidnight() {
+        val (start11, window11) = PriceIntelligenceEngine.formatRefillWindow(11)
+        assertEquals(10, start11)
+        assertEquals("10:00 - 12:00", window11)
+
+        val (start23, window23) = PriceIntelligenceEngine.formatRefillWindow(23)
+        assertEquals(23, start23)
+        assertEquals("23:00 - 24:00", window23)
+
+        val (start19, window19) = PriceIntelligenceEngine.formatRefillWindow(19)
+        assertEquals(19, start19)
+        assertEquals("19:00 - 21:00", window19)
+    }
+
+    @Test
+    fun testPriceIntelligenceEngine_suggestedDateEpochMsMatchesWindow() {
+        val now = 1760000000000L
+        val forecast = DepletionForecast(
+            remainingUnits = 10.0,
+            remainingPercent = 20.0,
+            remainingRangeKm = 150,
+            dailyKmRate = 50.0,
+            estimatedEmptyDateEpochMs = now + (3 * 24 * 3600 * 1000L),
+            estimatedCostToFull = 60.0,
+            projectedMonthlyExpense = 150.0
+        )
+
+        val recommendation = PriceIntelligenceEngine.recommendNextRefill(
+            forecast = forecast,
+            snapshots = emptyList(),
+            fuelType = FuelType.DIESEL,
+            currentTimeMs = now
+        )
+
+        val cal = Calendar.getInstance().apply { timeInMillis = recommendation.suggestedDateEpochMs }
+        assertEquals(10, cal.get(Calendar.HOUR_OF_DAY))
+        assertEquals(0, cal.get(Calendar.MINUTE))
+        assertEquals(0, cal.get(Calendar.SECOND))
+    }
+
+    @Test
+    fun testPriceIntelligenceEngine_multiStationProfileAveraging() {
+        val now = 1760000000000L
+        val cal = Calendar.getInstance().apply { timeInMillis = now + (1 * 24 * 3600 * 1000L) }
+        val targetDayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
+
+        // Station 1: 5 observations at 1.60 for hour 18
+        val profile1 = StationPriceProfile("st1", FuelType.DIESEL, targetDayOfWeek, 18, 1.60, 5)
+        // Station 2: 5 observations at 1.80 for hour 18 -> weighted average = 1.70, total samples = 10
+        val profile2 = StationPriceProfile("st2", FuelType.DIESEL, targetDayOfWeek, 18, 1.80, 5)
+
+        val forecast = DepletionForecast(
+            remainingUnits = 5.0,
+            remainingPercent = 10.0,
+            remainingRangeKm = 70,
+            dailyKmRate = 50.0,
+            estimatedEmptyDateEpochMs = now + (1 * 24 * 3600 * 1000L),
+            estimatedCostToFull = 60.0,
+            projectedMonthlyExpense = 150.0
+        )
+
+        val recommendation = PriceIntelligenceEngine.recommendNextRefill(
+            forecast = forecast,
+            snapshots = emptyList(),
+            stationProfiles = listOf(profile1, profile2),
+            fuelType = FuelType.DIESEL,
+            currentTimeMs = now
+        )
+
+        assertNotNull(recommendation)
+        assertTrue(recommendation.expectedPricePerUnit > 0.0)
     }
 }

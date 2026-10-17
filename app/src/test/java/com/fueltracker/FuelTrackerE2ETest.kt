@@ -159,10 +159,11 @@ class FuelTrackerE2ETest {
             forecast = forecast,
             snapshots = emptyList(),
             stationProfiles = emptyList(),
-            fuelType = FuelType.DIESEL
+            fuelType = FuelType.DIESEL,
+            currentTimeMs = morningTime
         )
         assertNotNull(coldStartRec)
-        assertEquals("11:00 - 13:00", coldStartRec.recommendedTimeWindow)
+        assertEquals("10:00 - 12:00", coldStartRec.recommendedTimeWindow)
         assertTrue(coldStartRec.estimatedSavingsPerUnit >= 0.05)
 
         // 10b. User sets custom API key and proxy URL
@@ -199,7 +200,10 @@ class FuelTrackerE2ETest {
         val station = fetched.first().station
         priceRepo.saveStation(station)
 
-        val nowMs = System.currentTimeMillis()
+        val nowCal = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 8)
+        }
+        val nowMs = nowCal.timeInMillis
         val targetCal = java.util.Calendar.getInstance()
         targetCal.timeInMillis = nowMs + (24L * 3600 * 1000L)
         val targetDayOfWeek = targetCal.get(java.util.Calendar.DAY_OF_WEEK)

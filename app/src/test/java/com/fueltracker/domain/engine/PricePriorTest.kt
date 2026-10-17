@@ -34,6 +34,12 @@ class PricePriorTest {
             val noonSpike = prior.getMultiplier(day, 12)
             assertTrue("Hour 12 spike ($noonSpike) should exceed hour 11 dip ($preNoon)", noonSpike > preNoon)
         }
+
+        // Verify Calendar.DAY_OF_WEEK alignment: day 1 is Sunday (weekend), day 6 is Friday (weekday)
+        assertEquals(0.95, prior.getMultiplier(1, 11), 0.001) // Sunday weekend pre-noon
+        assertEquals(1.04, prior.getMultiplier(1, 12), 0.001) // Sunday weekend noon
+        assertEquals(0.94, prior.getMultiplier(6, 11), 0.001) // Friday weekday pre-noon
+        assertEquals(1.05, prior.getMultiplier(6, 12), 0.001) // Friday weekday noon
     }
 
     @Test
@@ -129,9 +135,12 @@ class PricePriorTest {
             fuelType = FuelType.DIESEL
         )
 
-        // Default prior has lowest prices around 11:00 before noon hike
+        // Default prior has lowest prices around 11:00 before noon hike -> capped to 10:00 - 12:00
         assertNotNull(recommendation)
         assertTrue(recommendation.estimatedSavingsPerUnit >= 0.05)
-        assertEquals("11:00 - 13:00", recommendation.recommendedTimeWindow)
+        assertEquals("10:00 - 12:00", recommendation.recommendedTimeWindow)
+        val cal = Calendar.getInstance().apply { timeInMillis = recommendation.suggestedDateEpochMs }
+        assertEquals(10, cal.get(Calendar.HOUR_OF_DAY))
+        assertEquals(0, cal.get(Calendar.MINUTE))
     }
 }

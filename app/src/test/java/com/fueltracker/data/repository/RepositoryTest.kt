@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -368,6 +369,36 @@ class RepositoryTest {
 
         userPrefsRepo.setCustomApiKey(null)
         assertEquals(null, userPrefsRepo.customApiKeyFlow.first())
+    }
+
+    @Test
+    fun testDeleteLogCleansUpReceiptImageFile() = runBlocking<Unit> {
+        val vehicleDao = FakeVehicleDao()
+        val refuelDao = FakeRefuelLogDao()
+        val refuelRepo = RefuelRepositoryImpl(refuelDao, vehicleDao)
+
+        val tempImage = java.io.File.createTempFile("receipt_test_", ".jpg")
+        tempImage.writeText("test image data")
+        assertTrue(tempImage.exists())
+
+        val log = RefuelLog(
+            id = "log_receipt_1",
+            vehicleId = "v1",
+            timestampEpochMs = System.currentTimeMillis(),
+            odometerKm = 50000,
+            unitsFilled = 30.0,
+            totalCost = 50.0,
+            unitPrice = 1.667,
+            isFullFill = true,
+            receiptImagePath = tempImage.absolutePath
+        )
+        refuelRepo.saveLog(log)
+        assertEquals(1, refuelRepo.getLogsChronological("v1").size)
+
+        // Delete the log
+        refuelRepo.deleteLog(log)
+        assertEquals(0, refuelRepo.getLogsChronological("v1").size)
+        assertFalse(tempImage.exists())
     }
 }
 
